@@ -1,0 +1,235 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+    <title>Nuuk Jam</title>
+    <script>
+        var BASEURL = "http://nuukjam.ivoryworks.com/";
+        var GOGLURL = "http://goo.gl/";
+        var TXTPX = "txt/";
+        var IMGPX = "img/";
+        var SEPPX = "sep/";
+        var DATAPX = "data:image/";
+        var RawDataBuf = "";
+        var SepCodeBuf = "";
+
+        function init() {
+            RawDataBuf = "";
+            SepCodeBuf = "";
+            textLoad("");
+            document.getElementById("inCodeForm").style.display = "none";
+            document.getElementById("outCode").innerHTML = "";
+        }
+
+        function toggleInCodeForm() {
+            document.getElementById("inCode").value = "";
+            var stat = document.getElementById("inCodeForm").style.display;
+            document.getElementById("inCodeForm").style.display = (stat == "inline") ? "none" : "inline";
+        }
+
+        function nuuk(cb) {
+            gapi.client.load('urlshortener', 'v1', cb);
+        }
+
+        function makeJam() {
+            var longUrls = getLongUrls();
+            if (longUrls.length > 1) {
+                SepCodeBuf = "";
+                reEncodeSepUrl(longUrls, 0);    // 再起処理
+            } else {
+                gapi.client.load('urlshortener', 'v1', function() {
+                    var request = gapi.client.urlshortener.url.insert({ 'resource': { 'longUrl': longUrls[0] }});
+                    var resp = request.execute(function(resp) {
+                        if (resp.error) {
+                            alert("ERROR: " + resp.error.message);
+                        } else {
+                            document.getElementById("outCode").innerHTML = resp.id.replace(GOGLURL, "");
+                        }
+                    });
+                });
+            }
+        }
+
+        function eatJam() {
+            shortUrl = GOGLURL + document.getElementById("inCode").value;
+            toggleInCodeForm(); // コードを取得したら閉じる(内容もクリアされる）
+
+            var request = gapi.client.urlshortener.url.get({ 'shortUrl': shortUrl });
+            request.execute(function(response) {
+                var str = " "+response.longUrl;
+                if (str.indexOf(" "+BASEURL+IMGPX) != -1) {
+                    // 分割なし画像
+                    imageLoad(decodeURIComponent(response.longUrl.replace(BASEURL+IMGPX, "")));
+                } else if (str.indexOf(" "+BASEURL+SEPPX) != -1) {
+                    // 分割あり
+                    var sepCode = decodeURIComponent(response.longUrl.replace(BASEURL+SEPPX, ""));
+                    RawDataBuf = "";
+                    reDecodeSepUrl(sepCode.split("/"), 0);    // 再起的処理
+                } else {
+                    // テキスト
+                    textLoad(decodeURIComponent(response.longUrl.replace(BASEURL+TXTPX, "")));
+                }
+            });
+        }
+
+        // URLの配列を順にエンコードして結合する再起関数
+        function reEncodeSepUrl(longUrls, index) {
+            document.getElementById("outCode").innerHTML = index + "/" + longUrls.length;
+            if (longUrls.length < index+1) {
+                // 結合URLを更に短縮する
+                sepUrl = BASEURL + SEPPX + SepCodeBuf;
+                gapi.client.load('urlshortener', 'v1', function() {
+                    var request = gapi.client.urlshortener.url.insert({ 'resource': { 'longUrl': sepUrl }});
+                    var resp = request.execute(function(resp) {
+                        if (resp.error) {
+                            alert("ERROR(SEP): " + resp.error.message);
+                        } else {
+                            document.getElementById("outCode").innerHTML = resp.id.replace(GOGLURL, "");
+                        }
+                    });
+                });
+                return;
+            }
+
+            gapi.client.load('urlshortener', 'v1', function() {
+                var request = gapi.client.urlshortener.url.insert({ 'resource': { 'longUrl': longUrls[index] }});
+                var resp = request.execute(function(resp) {
+                    if (resp.error) {
+                        alert("ERROR: " + resp.error.message);
+                    } else {
+                        if (SepCodeBuf != "") {
+                            SepCodeBuf += "/";
+                        }
+                        SepCodeBuf += resp.id.replace(GOGLURL, "");
+                        reEncodeSepUrl(longUrls, index+1);  // 再起
+                    }
+                });
+            });
+        }
+
+        // コードの配列を順にデコードして結合する再起関数
+        function reDecodeSepUrl(codes, index) {
+            document.getElementById("outCode").innerHTML = index + "/" + codes.length;
+            if (codes.length < index+1) {
+                var utf8uri = new RegExp(
+                   "%[0-7][0-9A-F]|"+
+                   "%C[2-9A-F]%[89AB][0-9A-F]|%D[0-9A-F]%[89AB][0-9A-F]|"+
+                   "%E[0-F](?:%[89AB][0-9A-F]){2}|"+
+                   "%F[0-7](?:%[89AB][0-9A-F]){3}|"+
+                   "%F[89AB](?:%[89AB][0-9A-F]){4}|"+
+                   "%F[CD](?:%[89AB][0-9A-F]){5}","ig");
+
+                rawData=RawDataBuf.replace(utf8uri,function(whole){
+                    document.getElementById("outCode").innerHTML = "";  // 完了時にクリア
+                    return decodeURIComponent(whole);
+                });
+
+                var str = " "+rawData;
+                if (str.indexOf(" "+DATAPX) != -1) {
+                    imageLoad(rawData);
+                } else {
+                    textLoad(rawData);
+                }
+                return;
+            }
+            var request = gapi.client.urlshortener.url.get({ 'shortUrl': GOGLURL+codes[index] });
+            request.execute(function(response) {
+                var buf = response.longUrl.replace(BASEURL+IMGPX, "");
+                RawDataBuf += buf.replace(BASEURL+TXTPX, "");
+                reDecodeSepUrl(codes, index+1); // 再起
+            });
+        }
+
+        function imageLoad(base64Data) {
+            document.getElementById("drawArea").src = base64Data;
+            document.getElementById('editArea').style.display = "none";     // Invisible
+            document.getElementById('drawArea').style.display = "inline";   // Visible
+        }
+
+        function textLoad(inText) {
+            document.getElementById('editArea').value = inText;
+            document.getElementById('editArea').style.display = "inline";     // Visible
+            document.getElementById('drawArea').style.display = "none";   // Invisible
+        }
+
+        function getLongUrls() {
+            var inText = document.getElementById("editArea").value;
+            var str = " "+inText;
+            var prefix = (str.indexOf(" "+DATAPX) != -1) ? IMGPX : TXTPX;
+
+            var maxLen = 1024;
+            var encodeUrl = encodeURIComponent(inText);
+            var urls = new Array();
+            var sepNum = encodeUrl.length / maxLen;
+            for (i = 0; i < sepNum; i++) {
+                urls[i] = BASEURL + prefix + encodeUrl.slice(maxLen*i, maxLen*(i+1));
+            }
+            if (encodeUrl.length % maxLen) {
+                urls[sepNum] = BASEURL + prefix +  encodeUrl.slice(maxLen*sepNum);
+            }
+            return urls;
+        }
+
+        function onDrop(event) {
+            var reader = new FileReader();
+            reader.onload = function() {
+                imageLoad(reader.result);
+                document.getElementById('editArea').value = reader.result;  // data url
+            }
+            reader.readAsDataURL(event.dataTransfer.files[0]);
+            event.preventDefault();
+        }
+
+	    function onDragOver(event) {
+	        event.preventDefault(); // for Drag&Drop
+        }
+
+	    function load(event) {
+            init();
+            document.getElementById("dropArea").addEventListener("drop", onDrop, false);
+            gapi.client.setApiKey('AIzaSyAUlHMIFXtIHQeM5YuU3p8t638fMCEcrIU');
+	    }
+    </script>
+    <script src="https://apis.google.com/js/client.js?onload=load"></script>
+    <style>
+        h1 a {
+        	color:#000000;
+        }
+        a {
+        	text-decoration:none;
+        }
+        #outCode {
+            font-size:large;
+            fong-weight:bold;
+        }
+        #editArea{
+            font-family:'MS PGothic','ＭＳ Ｐゴシック',sans-serif;line-height:18px;font-size:16px;
+            width: 100%;
+            height: 350px;
+        }
+        #footer {
+            font-size:small;
+            text-align:right;
+        }
+    </style>
+</head>
+<body>
+    <h1><a href="./">Nuuk Jam</a></h1>
+    <div id="menubar">
+        <a href="Javascript:init()"><img src="./res/new.png" /></a>
+        <a href="Javascript:toggleInCodeForm()"><img src="./res/load.png" /></a>
+        <form id="inCodeForm">
+            <input type="text" id="inCode" />
+            <input type="button" value="load" onClick="nuuk(eatJam)" />
+        </form>
+        <a href="Javascript:nuuk(makeJam)"><img src="./res/save.png" /></a>
+        <span id="outCode"></span>
+    </div>
+    <div id="dropArea" ondragover="onDragOver(event)">
+        <textarea id="editArea"></textarea>
+        <img id="drawArea" src="" />
+    </div>
+    <div id="footer">2013 Powerd by <a href="http://www.ivoryworks.com/">Ivoryworks</a>.</div>
+    <div id="test"></div>
+</body>
+</html>
